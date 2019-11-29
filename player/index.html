@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Bitmovin SDK</title>
+    <meta charset="UTF-8"/>
+    <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link href="https://fonts.googleapis.com/css?family=Dosis" rel="stylesheet" type="text/css"/>
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css" crossorigin="anonymous">
+    <!-- Bitmovin Player -->
+    <script type="text/javascript" src="https://cdn.bitmovin.com/player/web/8.23.0/bitmovinplayer.js"></script>
+    <script
+        src="https://code.jquery.com/jquery-3.4.1.min.js"
+        integrity="sha256-CSXorXvZcTkaix6Yvo6HppcZGetbYMGWSFlBw8HfCJo="
+        crossorigin="anonymous"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/2.8.0/Chart.bundle.js" type="text/javascript"></script>
+</head>
+<body>
+
+    <div class="container">
+        <div class="content">
+          <br />
+          DASH:
+          <input class="form-control input-sm" id="dashManifest" type="text" placeholder="DASH" value="https://akamaibroadcasteruseast.akamaized.net/cmaf/live/657078/akasource/out.mpd">
+          <br />
+          <button type="submit" class="btn btn-dark" id="unloadSourceButton">Unload</button>
+          <button type="submit" class="btn btn-dark" id="loadSourceButton">Load</button>
+          <br />
+          <br />
+          <div class="player-wrapper">
+            <div id="player"></div>
+          </div>
+          <br />
+          <div class="latency-control">
+            <div>
+              Target Latency: <span id="targetLatency">2</span>
+            </div>
+            <br />
+            <div class="slide-container">
+              <input type="range" min="0.5" max="5" value="2" step="0.1" class="slider" id="targetLatencySlider">
+            </div>
+          </div>
+          <br />
+          <div class="latency-control">
+            <div id="targetPlaybackRateText">
+              PlaybackRate: <span id="targetPlaybackRate">120%</span> <span id="speedPlaybackRate">(catch up)</span>
+            </div>
+          </div>
+          <br />
+          <div class="slide-container">
+            <input type="range" min="100" max="150" value="120" step="5" class="slider" id="targetPlaybackRateSlider">
+          </div>
+          <br />
+        </div>
+        <br />
+        <canvas id="myChart" width="400" height="400"></canvas>
+      </div>
+      
+
+<script type="text/javascript">
+var bitrateChart;
+var currentDownloadBitrate = 0;
+var currentPlayingBitrate = 0;
+var player;
+var source;
+var slider = document.querySelector('#targetLatencySlider');
+var sliderPlaybackRate = document.querySelector('#targetPlaybackRateSlider');
+var targetLatency = 3;
+var targetPlaybackRate = 120;
+var targetLatencyDisplay = document.querySelector('#targetLatency');
+var targetPlaybackRateDisplay = document.querySelector('#targetPlaybackRate');
+
+var conf = {
+  key: '<KEY>',
+  source: {},
+  playback: {
+    autoplay: true,
+    muted: true
+  },
+  adaptation: {
+    preload: false,
+  },
+  tweaks: {
+    RESTART_THRESHOLD: 0.2,
+    RESTART_THRESHOLD_DELTA: 0.05,
+    STARTUP_THRESHOLD: 0.2,
+    STARTUP_THRESHOLD_DELTA: 0.05,
+    END_OF_BUFFER_TOLERANCE: 0.05,
+    LIVE_EDGE_DISTANCE: 0.5,
+    LOW_LATENCY_BUFFER_GUARD: 0.8,
+    CHUNKED_CMAF_STREAMING: true,
+  },
+  live: {
+    lowLatency: {
+      targetLatency: 3,
+      catchup: {
+        playbackRateThreshold: 0.075,
+        seekThreshold: 5,
+        playbackRate: 1.2,
+      },
+      fallback: {
+        playbackRateThreshold: 0.075,
+        seekThreshold: 5,
+        playbackRate: 0.95,
+      }
+    }
+  }
+};
+
+var container = document.getElementById('player');
+
+function getNewSource() {
+  var newSource = {
+    dash: $('#dashManifest').val()
+  };
+  return newSource;
+}
+
+source = getNewSource();
+conf.source = source;
+
+player = new bitmovin.player.Player(container, conf);
+
+player.load(source).then(() => {
+  console.log('Source loaded successful');
+  player.setVideoQuality(player.getAvailableVideoQualities()[0].id);
+  updateTargetLatency();
+  setupChart();
+}, function() {
+  console.log('Error while loading source');
+});
+
+player.on(bitmovin.player.PlayerEvent.LatencyModeChanged, function(event) {
+  if (event.to == "catchup") {
+    $('#targetPlaybackRateText').addClass("catchup");
+    var videoBufferLevel = Math.round(player.lowlatency.getCatchupConfig().playbackRate * 100);
+  } else {
+    $('#targetPlaybackRateText').removeClass("catchup");
+  }
+
+});
+
+player.on('timechanged', function(event) {
+  var currentLatency = player.lowlatency.getLatency();
+  addNewData(event.time, targetLatency, currentLatency)
+});
+
+$('#loadSourceButton').click(function(link) {
+  player.load(getNewSource());
+})
+
+$('#unloadSourceButton').click(function(link) {
+  player.unload();
+  $('#targetPlaybackRateText').removeClass("catchup");
+})
+
+
+// SLIDER
+
+var updateTargetLatency = function() {
+  targetLatencyDisplay.innerText = slider.value + 's';
+  targetLatency = Number(slider.value);
+  player.lowlatency.setTargetLatency(targetLatency);
+};
+
+slider.oninput = updateTargetLatency;
+slider.value = String(targetLatency);
+
+var updatePlaybackRate = function() {
+  targetPlaybackRateDisplay.innerText = sliderPlaybackRate.value + '%';
+  targetPlaybackRate = Number(sliderPlaybackRate.value);
+  player.lowlatency.setCatchupConfig({
+    playbackRate: sliderPlaybackRate.value / 100,
+    playbackRateThreshold: 0.075,
+    seekThreshold: 5
+  });
+};
+
+sliderPlaybackRate.oninput = updatePlaybackRate;
+sliderPlaybackRate.value = String(targetPlaybackRate);
+
+
+// CHART
+
+window.chartColors = {
+  black: 'rgb(0,0,0)',
+  white: 'rgb(255,255,255)',
+  red: 'rgb(255, 99, 132)',
+  orange: 'rgb(255, 159, 64)',
+  yellow: 'rgb(255, 205, 86)',
+  green: 'rgb(75, 192, 192)',
+  blue: 'rgb(54, 162, 235)',
+  purple: 'rgb(153, 102, 255)',
+  grey: 'rgb(201, 203, 207)'
+};
+
+function clearChart() {
+  bitrateChart.destroy();
+}
+
+
+function getTimeFromTimestamp(unix_timestamp) {
+  var date = new Date(unix_timestamp * 1000);
+  var hours = date.getHours();
+  var minutes = "0" + date.getMinutes();
+  var seconds = "0" + date.getSeconds();
+  var formattedTime = hours + ':' + minutes.substr(-2) + ':' + seconds.substr(-2);
+  return formattedTime;
+}
+
+var addNewData = function(time, targetLatency, currentLatency) {
+  if (time % 2) {
+
+    time = getTimeFromTimestamp(time);
+    bitrateChart.data.datasets[0].data.push({
+      x: time,
+      y: targetLatency
+    });
+    bitrateChart.data.datasets[1].data.push({
+      x: time,
+      y: currentLatency
+    });
+
+    bitrateChart.data.labels.push(time);
+
+    if (bitrateChart.data.datasets[0].data.length > 20) {
+      bitrateChart.data.labels.shift();
+      bitrateChart.data.datasets[0].data.shift();
+      bitrateChart.data.datasets[1].data.shift();
+    }
+
+    bitrateChart.update();
+  }
+}
+
+var setupChart = function() {
+  initialTimestamp = Date.now()
+
+  bitrateChart = new Chart(document.getElementById("myChart"), {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [{
+        data: [],
+        label: "Target Latency",
+        borderColor: window.chartColors.red,
+        backgroundColor: window.chartColors.red,
+        fill: false
+      }, {
+        data: [],
+        label: "Current Latency",
+        borderColor: window.chartColors.grey,
+        backgroundColor: window.chartColors.grey,
+        fill: false
+      }]
+    },
+    options: {
+      title: {
+        display: true,
+        text: 'Latency'
+      },
+      scales: {
+        xAxes: [{
+          display: true,
+          scaleLabel: {
+            display: true,
+            labelString: 'Time'
+          },
+          ticks: {
+            min: 0,
+            max: 5,
+            stepSize: 1
+          }
+        }],
+        yAxes: [{
+          display: true,
+          scaleLabel: {
+            display: true,
+            labelString: 'seconds'
+          },
+          ticks: {
+            min: 0,
+            max: 5,
+            stepSize: 1
+          }
+        }]
+      }
+    }
+  });
+};
+
+</script>
+<style>
+    html, body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        font-family: 'Open Sans', sans-serif;
+        font-weight: 300;
+        color: #fff;
+    }
+    body {
+        background: rgba(44, 131, 185, 1);
+        background: linear-gradient(to right, rgba(44, 131, 185, 1) 0%, rgba(30, 171, 227, 1) 100%);
+        filter: progid:DXImageTransform.Microsoft.gradient(startColorstr='#2c83b9', endColorstr='#1eabe3', GradientType=1);
+    }
+    figure {
+  margin: 0;
+  padding: 0;
+}
+
+.container {
+  color: black;
+  text-align: center;
+}
+
+.container a {
+  color: black;
+}
+
+.container h1 {
+  margin-bottom: 22px;
+  line-height: 66px;
+}
+
+.container h2 {
+  font-weight: normal;
+  margin-bottom: 36px;
+  line-height: 26px;
+}
+
+.player-wrapper {
+  width: 80%;
+  margin: 20px auto;
+  box-shadow: 0 0 30px rgba(0, 0, 0, 0.7);
+}
+
+#speedPlaybackRate {
+  display: none;
+}
+
+.catchup {
+  color: green;
+}
+
+.catchup #speedPlaybackRate {
+  display: block;
+}
+
+/* SLIDER */
+
+.slider {
+  -webkit-appearance: none;
+  width: 100%;
+  border-radius: 5px;
+  outline: none;
+  opacity: 0.7;
+  -webkit-transition: .2s;
+  transition: opacity .2s;
+  padding-bottom: 8px;
+}
+
+.slider::-ms-track {
+  height: 14px;
+  background: transparent;
+  border-color: transparent;
+  color: transparent;
+}
+
+.slider::-ms-fill-lower {
+  height: 8px;
+  border-radius: 5px;
+  background: #DDECF4;
+}
+
+.slider::-ms-fill-upper {
+  height: 8px;
+  border-radius: 5px;
+  background: #DDECF4;
+}
+
+.slider::-ms-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #ffffff;
+  cursor: pointer;
+  border: 3px solid #1FAAE2;
+  margin-top: 0 !important;
+}
+
+.slider::-webkit-slider-runnable-track {
+  height: 8px;
+  background: #DDECF4;
+}
+
+.slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #ffffff;
+  cursor: pointer;
+  border: 3px solid #1FAAE2;
+  margin-top: -7px;
+}
+
+.slider::-moz-range-track {
+  height: 8px;
+  background: #DDECF4;
+}
+
+.slider::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #ffffff;
+  cursor: pointer;
+  border: 3px solid #1FAAE2;
+}
+
+</style>
+</body>
+</html>

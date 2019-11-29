@@ -1,0 +1,14 @@
+{
+  "name": "nodejs-originn-server",
+  "version": "0.0.1",
+  "description": "nodejs chunked server",
+  "author": "Michael Riha <michael.riha@bitmovin.com>",
+  "license": "MIT",
+  "main": "app.js",
+  "keywords": [
+    "nodejs",
+    "express"
+  ],
+  "dependencies": {
+  }
+}
