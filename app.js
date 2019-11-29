@@ -2,6 +2,12 @@ var fs = require('fs')
 var http = require('http')
 var url = require('url')
 
+console.log("current folder:", __dirname);
+var myArgs = process.argv.slice(2);
+console.log("current args:", myArgs);
+//https://nodejs.org/en/knowledge/command-line/how-to-parse-command-line-arguments/
+console.log(process.argv);
+
 var buf=function(res,fd,i,s,buffer){
  if(i+buffer.length<s){
   fs.read(fd,buffer,0,buffer.length,i,function(e,l,b){
@@ -46,7 +52,7 @@ var app = function(req,res){
   //console.log("file was requested:", req.url);
   console.log("request method", req.method);
  if(req.method==="PUT") {
-   console.log("used put", req.url);
+   //console.log("used put", req.url);
    var reg= /([a-zA-Z0-9\s_\\.\-\(\):])+(.m4s|.mp4|.mpd|.m3u8)$/
    var urlObj= url.parse(req.url);
    console.log("url", urlObj);
@@ -58,11 +64,11 @@ var app = function(req,res){
         var writable = fs.createWriteStream('/Users/michael.riha/www/experiments/CMAF_Origin_Server/out/'+fileName);
         req.pipe(writable);
         req.on('data', function(data){
-             console.log("send data length", data.length);
+             //console.log("send data length", data.length);
          })
 
          req.on('end', function(data){
-              console.log("all data are sent");
+              //console.log("all data are sent");
               req.unpipe();
               res.end();
           })
@@ -73,8 +79,9 @@ var app = function(req,res){
         res.write("this file is not allowed to be stored!");
       }
 
- } else {
-   var head={'Content-Type':'text/html'}
+ } else if(req.method==="GET") {
+   var head={'Content-Type':'text/html',
+   'Access-Control-Allow-Origin': '*'}
    res.writeHead(200,head)
    switch(req.url.slice(-3)){
     case '.js':head={'Content-Type':'text/javascript'};break;
@@ -85,7 +92,7 @@ var app = function(req,res){
     case 'ebm':head={'Content-Type':'video/webm'};break;
    }
    res.writeHead(200,head)
-   var file_stream = fs.createReadStream('/out/'+req.url);
+   var file_stream = fs.createReadStream('./out'+req.url);
    file_stream.on("error", function(exception) {
      console.error("Error reading file: ", exception);
    });
@@ -96,8 +103,12 @@ var app = function(req,res){
    file_stream.on("close", function() {
      res.end();
    });
+ } else if(req.method==="DELETE") {
+   console.log("DELETE"+req.url);
+   fs.unlinkSync('./out'+req.url);
+   console.log("deleted file");
  }
 }
 
-http.createServer(app).listen(5000)
-console.log('GET http://127.0.0.1:5000')
+http.createServer(app).listen(myArgs[1])
+console.log('GET http://127.0.0.1:'+myArgs[1])
