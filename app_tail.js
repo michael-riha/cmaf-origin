@@ -1,6 +1,14 @@
 var fs = require('fs')
 var http = require('http')
 var url = require('url')
+var ts = require('./libs/tail');
+
+console.log("current folder:", __dirname);
+var myArgs = process.argv.slice(2);
+console.log("current args:", myArgs);
+var output_folder= myArgs[1]
+//https://nodejs.org/en/knowledge/command-line/how-to-parse-command-line-arguments/
+console.log(process.argv);
 
 var buf=function(res,fd,i,s,buffer){
  if(i+buffer.length<s){
@@ -45,7 +53,7 @@ var app = function(req,res){
 var app = function(req,res){
   //console.log("file was requested:", req.url);
   console.log("request method", req.method);
- if(req.method==="PUT" || req.method==="POST") {
+ if(req.method==="PUT") {
    console.log("used put", req.url);
    var reg= /([a-zA-Z0-9\s_\\.\-\(\):])+(.m4s|.mp4|.mpd|.m3u8)$/
    var urlObj= url.parse(req.url);
@@ -55,11 +63,12 @@ var app = function(req,res){
    var extensions = fileName.match( reg );
       if(extensions){
         res.writeHead(200)
-        var writable = fs.createWriteStream('/out/'+fileName);
+        var writable = fs.createWriteStream(output_folder+"/"+fileName);
         req.pipe(writable);
         req.on('data', function(data){
             console.log("write <- data ("+req.url+")  length ", data.length);
          })
+
          req.on('end', function(data){
               console.log("write <- data ("+req.url+")  END | ");
               req.unpipe();
@@ -71,6 +80,7 @@ var app = function(req,res){
         res.writeHead(403, head);
         res.write("this file is not allowed to be stored!");
       }
+
  } else if(req.method==="GET") {
    console.log("used get", req.url);
    var head={'Content-Type':'text/html',
@@ -91,37 +101,33 @@ var app = function(req,res){
     res.end();
    }
    else {
-    console.log("deliver a cmaf file ("+req.url+")");
-    var file_stream = fs.createReadStream('/out'+req.url);
-    file_stream.on("error", function(exception) {
+    console.log("deliver a cmaf file ("+output_folder+req.url+")");
+    var tstream = ts.createReadStream(output_folder+req.url, {
+      beginAt: 0,
+      detectTruncate: true,
+      waitForCreate: true,
+      //onTruncate: 'reset',
+      endOnError: true
+    });
+    tstream .on("error", function(exception) {
       console.error("Error reading file: ", exception);
     });
-    file_stream.on("data", function(data) {
+    tstream .on("data", function(data) {
       console.log("send -> data ("+req.url+")", data.length);
       res.write(data);
     });
-    file_stream.on("close", function() {
-      console.log("send -> data ("+req.url+") CLOSED | ");
+    tstream.on("eof", function() {
+      console.log("send -> data ("+req.url+") EOF | ");
       res.end();
-    });
-    file_stream.on('finish', () => {
-      console.log("send -> data ("+req.url+") FINISHED | ");
     });
    }
  } 
   else if(req.method==="DELETE") {
-   console.log("DELETE"+req.url);
-   fs.unlinkSync('/out'+req.url);
+   //console.log("DELETE"+req.url);
+   fs.unlinkSync(output_folder+req.url);
    //console.log("deleted file");
  }
 }
 
-
-console.log("current folder:", __dirname);
-var appArgs = process.argv.slice(2);
-console.log("current args:", appArgs);
-//https://nodejs.org/en/knowledge/command-line/how-to-parse-command-line-arguments/
-console.log(process.argv);
-
-http.createServer(app).listen(parseInt(appArgs[0]))
-console.log('GET http://127.0.0.1:'+appArgs[0])
+http.createServer(app).listen(parseInt(myArgs[0]))
+console.log('GET http://127.0.0.1:'+myArgs[0]+" using folder -> "+myArgs[1]+"/")

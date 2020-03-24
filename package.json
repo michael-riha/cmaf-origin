@@ -2,16 +2,15 @@
   "name": "nodejs-originn-server",
   "version": "0.0.1",
   "description": "nodejs chunked server",
-  "author": "Michael Riha <michael.riha@bitmovin.com>",
+  "author": "Michael Riha <michael.riha@gmail.com>",
   "license": "MIT",
   "main": "app.js",
   "scripts": {
-    "start": "node app.js get 5000 & node app put 4000"
+    "start": "node app 5000 /out & node app put 4000"
   },
   "keywords": [
     "nodejs",
     "express"
   ],
-  "dependencies": {
-  }
+  "dependencies": {}
 }
