@@ -1,127 +1,100 @@
 var fs = require('fs')
 var http = require('http')
 var url = require('url')
+var zlib = require('zlib')
+var chunkedStream = require('./libs/chunkedStream');
 
-var buf=function(res,fd,i,s,buffer){
- if(i+buffer.length<s){
-  fs.read(fd,buffer,0,buffer.length,i,function(e,l,b){
-   res.write(b.slice(0,l))
-   //console.log(b.toString('utf8',0,l))
-   i=i+buffer.length
-   buf(res,fd,i,s,buffer)
-  })
- }
- else{
-  fs.read(fd,buffer,0,buffer.length,i,function(e,l,b){
-   res.end(b.slice(0,l))
-   fs.close(fd)
-  })
- }
-}
-
-/*
-var app = function(req,res){
- var head={'Content-Type':'text/html; charset=UTF-8'}
- switch(req.url.slice(-3)){
-  case '.js':head={'Content-Type':'text/javascript'};break;
-  case 'css':head={'Content-Type':'text/css'};break;
-  case 'png':head={'Content-Type':'image/png'};break;
-  case 'ico':head={'Content-Type':'image/x-icon'};break;
-  case 'ogg':head={'Content-Type':'audio/ogg'};break;
-  case 'ebm':head={'Content-Type':'video/webm'};break;
- }
- head['Transfer-Encoding']='chunked'
- res.writeHead(200,head)
- fs.open('.'+req.url,'r',function(err,fd){
-  fs.fstat(fd,function(err, stats){
-   console.log('.'+req.url+' '+stats.size+' '+head['Content-Type']+' '+head['Transfer-Encoding'])
-   var buffer = new Buffer(100)
-   buf(res,fd,0,stats.size,buffer)
-  })
- })
-}
-*/
-
-var app = function(req,res){
-  //console.log("file was requested:", req.url);
+// this is the basic webserver
+var app = function(req,res) {
   console.log("request method", req.method);
- if(req.method==="PUT" || req.method==="POST") {
-   console.log("used put", req.url);
-   var reg= /([a-zA-Z0-9\s_\\.\-\(\):])+(.m4s|.mp4|.mpd|.m3u8)$/
-   var urlObj= url.parse(req.url);
-   //console.log("url", urlObj);
-   var fileName= urlObj.path.split("/")[1];
-   console.log("fileName", fileName);
-   var extensions = fileName.match( reg );
-      if(extensions){
+  if(req.method==="PUT" || req.method==="POST") {
+    console.log("used put or post to write ->", req.url);
+    var urlObj= url.parse(req.url);
+    //console.log("url", urlObj);
+    var fileName=urlObj.path.split("/")[1];
+    console.log("fileName", fileName);
+    var reg= /([a-zA-Z0-9\s_\\.\-\(\):])+(.m4s|.m4a|.m4v|.mp4|.mpd|.m3u8)$/ // just m4s, m4v, m4a, mpd, m3u8 - Files are allowed
+    var extensions = fileName.match(reg);
+    if(extensions){
         res.writeHead(200)
-        var writable = fs.createWriteStream('/out/'+fileName);
+        var writable = fs.createWriteStream(output_folder+"/"+fileName);
         req.pipe(writable);
         req.on('data', function(data){
-            console.log("write <- data ("+req.url+")  length ", data.length);
-         })
-         req.on('end', function(data){
-              console.log("write <- data ("+req.url+")  END | ");
-              req.unpipe();
-              res.end();
-          })
-      }else{
-      	console.log("this is no valid file we do not store it");
+          console.log("write <- data ("+req.url+")  length ", data.length);
+        })
+        req.on('end', function(data){
+          console.log("write <- data ("+req.url+")  END | ");
+          req.unpipe();
+          res.end();
+        })
+      } else {
+        console.log("this is no valid file we do not store it");
         var head={'Content-Type':'text/html'}
         res.writeHead(403, head);
         res.write("this file is not allowed to be stored!");
       }
- } else if(req.method==="GET") {
-   console.log("used get", req.url);
-   var head={'Content-Type':'text/html',
-   'Access-Control-Allow-Origin': '*'}
-   res.writeHead(200,head)
-   switch(req.url.slice(-3)){
-    case '.js':head={'Content-Type':'text/javascript'};break;
-    case 'css':head={'Content-Type':'text/css'};break;
-    case 'png':head={'Content-Type':'image/png'};break;
-    case 'ico':head={'Content-Type':'image/x-icon'};break;
-    case 'ogg':head={'Content-Type':'audio/ogg'};break;
-    case 'ebm':head={'Content-Type':'video/webm'};break;
-   }
-   res.writeHead(200,head)
-   if(req.url=="/player") {
-    var data= fs.readFileSync("player/index.html")
-    res.write(data);
-    res.end();
-   }
-   else {
-    console.log("deliver a cmaf file ("+req.url+")");
-    var file_stream = fs.createReadStream('/out'+req.url);
-    file_stream.on("error", function(exception) {
-      console.error("Error reading file: ", exception);
-    });
-    file_stream.on("data", function(data) {
-      console.log("send -> data ("+req.url+")", data.length);
+  } else if(req.method==="GET") {
+    console.log("used get", req.url);
+    var head={'Content-Type':'text/html',
+    'Access-Control-Allow-Origin': '*'}
+    switch(req.url.slice(-3)){
+      case '.js':head={'Content-Type':'text/javascript'};break;
+      case 'css':head={'Content-Type':'text/css'};break;
+      case 'png':head={'Content-Type':'image/png'};break;
+      case 'ico':head={'Content-Type':'image/x-icon'};break;
+      case 'ogg':head={'Content-Type':'audio/ogg'};break;
+      case 'ebm':head={'Content-Type':'video/webm'};break;
+    }
+    // deliver a basic player (BITMOVIN) to monitor this server
+    if(req.url=="/player") {
+      res.writeHead(200,head)
+      var data= fs.readFileSync("player/index.html")
       res.write(data);
-    });
-    file_stream.on("close", function() {
-      console.log("send -> data ("+req.url+") CLOSED | ");
       res.end();
-    });
-    file_stream.on('finish', () => {
-      console.log("send -> data ("+req.url+") FINISHED | ");
-    });
-   }
- } 
-  else if(req.method==="DELETE") {
-   console.log("DELETE"+req.url);
-   fs.unlinkSync('/out'+req.url);
-   //console.log("deleted file");
- }
+    } else {
+      console.log("deliver a cmaf A/V-File ("+output_folder+req.url+") compressed");
+      res.setHeader('content-encoding', 'gzip')
+      res.setHeader('Content-Type', 'video/iso.segment')
+      res.writeHead(200,head)
+      // Create a Gzip Transform Stream -> https://stackoverflow.com/questions/59329342/how-to-send-chunked-gzip-response-to-browser-from-node-js
+      const gzip = zlib.createGzip();
+      // Pipe the Gzip Transform Stream into the Response stream
+      gzip.pipe(res);
+      // lets continuesly deliver the Files that get written during delivery in a (`tail -f`-way) with a custom `stream.Readable`
+      var chS = chunkedStream.createReadStream(output_folder+req.url, {
+        beginAt: 0,
+        detectTruncate: true,
+        waitForCreate: true,
+        //onTruncate: 'reset',
+        endOnError: true
+      });
+      chS.on("error", function(exception) {
+        console.error("Error reading file: ", exception);
+      });
+      chS.on("data", function(data) {
+        console.log("send -> data ("+req.url+")", data.length);
+        gzip.write(data);
+        gzip.flush();
+        //res.write(data);
+      });
+      chS.on("eof", function() {
+        console.log("send -> data ("+req.url+") EOF | ");
+        gzip.end();
+        //res.end();
+      });
+    }
+  } else if(req.method==="DELETE") { //ffmpeg also deletes the via PUT/POST provided files if you set the `remove_at_exit`-Flag for the dash-muxer
+    console.log("DELETE "+req.url);
+    fs.unlinkSync(output_folder+req.url);
+  }
 }
 
-
 console.log("current folder:", __dirname);
-var appArgs = process.argv.slice(2);
-console.log("current args:", appArgs);
+var myArgs = process.argv.slice(2);
+console.log("current args:", myArgs);
+var output_folder= myArgs[1]
 //https://nodejs.org/en/knowledge/command-line/how-to-parse-command-line-arguments/
 console.log(process.argv);
 
-http.createServer(app).listen(parseInt(appArgs[0]))
-console.log('GET http://127.0.0.1:'+appArgs[0])
+http.createServer(app).listen(parseInt(myArgs[0]))
+console.log('GET http://127.0.0.1:'+myArgs[0]+" using folder -> "+myArgs[1]+"/")

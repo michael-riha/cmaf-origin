@@ -1,16 +1,20 @@
 {
   "name": "nodejs-originn-server",
   "version": "0.0.1",
-  "description": "nodejs chunked server",
+  "description": "nodejs cmaf chunked MPEG-DASH Server to work with `ffmpeg`-dash muxer",
   "author": "Michael Riha <michael.riha@gmail.com>",
   "license": "MIT",
   "main": "app.js",
   "scripts": {
-    "start": "node app 5000 /out & node app put 4000"
+    "start": "node app 5000 /out > /out/request_input.log & node app 5001 /out > /out/response_output.log"
   },
   "keywords": [
-    "nodejs",
-    "express"
+    "nodejs"
   ],
-  "dependencies": {}
+  "dependencies": {},
+  "comments": {
+    "about this->": "https://dev.to/napolux/how-to-add-comments-to-packagejson-5doi",
+    "scripts->start": "we start two processes just to make it more performant, maybe use subprocesses or worker but let's keep it simple now",
+    "logging to file, instead of stdout": "https://askubuntu.com/questions/420981/how-do-i-save-terminal-output-to-a-file"
+  }
 }

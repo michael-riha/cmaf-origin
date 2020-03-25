@@ -4,9 +4,9 @@ var stream = require('stream');
 var util = require('util');
 var fs = require('fs');
 
-function TailStream(filepath, opts) {
+function ChunkedStream(filepath, opts) {
     //call the stream.Readable constructor
-    TailStream.super_.call(this, opts);
+    ChunkedStream.super_.call(this, opts);
 
     this.dataAvailable = false; // to prevent pushing data upfront before we open the file
     this.lastSize = null; //for truncating might be DELTED
@@ -15,25 +15,26 @@ function TailStream(filepath, opts) {
     this.originalPath= filepath; // original path from the http.request to `filder/file.mp4` to display for debug reason
     this.path = path.resolve(filepath); 
     
-    this.EOFtimeout = null;
-    this.startMarker= null;
-    this.endMarker= null;
+    this.EOFtimeout = null; // this is the timeout id to clear when a files is changed but a timer is already set because file is fully read
+    this.EOFduration= 600; // how long do we set the timeout when file is fully read and before end of file is emitted
+    this.startMarker= null; // time marker to benchmark between timeout is set and is cleared because file has changed
+    this.endMarker= null; // end maker when timeout is cleared
 
 
     this.opts = {
         beginAt: 0,
         detectTruncate: true,
-        onMove: 'follow', // or 'end' or 'exit' or 'stay'
         onTruncate: 'end', // or 'reset' to seek to beginning of file
         endOnError: false,
-        useWatch: !!fs.watch,
+        useWatch: true,
         waitForCreate: false
     };
 
     for(var key in opts) {
         this.opts[key] = opts[key];
     }
-    
+    console.log("ChunkedStream options set:", this.opts);    
+    //process.exit();
     this._start = function() {
         this.firstRead = true;
         this.waitingForReappear = false;
@@ -50,22 +51,6 @@ function TailStream(filepath, opts) {
                 this._read();
             }
         });
-    };
-    this._destroy = (err, cb) => {
-        this.end();
-        cb(err);
-    };
-
-    this.getCurrentPath = function(filename) {
-        if(filename && !fs.existsSync('/proc')) {
-            return filename;
-        }
-        try {
-            return fs.readlinkSync('/proc/self/fd/'+this.fd);
-        } catch(e) {
-            if(filename) return filename;
-            return null;
-        }
     };
 
     this.waitForFileToReappear = function() {
@@ -86,41 +71,6 @@ function TailStream(filepath, opts) {
         this.waitForMoreData(true);
     };
 
-    this.fileReappeared = function() {
-        try {
-            this.fd = fs.openSync(this.path, 'r');
-        } catch(e) {
-            return;
-        }
-        this.waitingForReappear = false;
-        // switch back to fs.watch if supported
-        if(this.opts.useWatch) {
-            this.waitForMoreData();
-        }
-        this.emit('replace');
-        // reset size and bytes read since this is a new file
-        this.lastSize = null;
-        this.bytesRead = 0;
-    };
-
-    this.move = function(newpath) {
-        var oldpath = this.path ? path.resolve(this.path) : null;
-        if(this.opts.onMove == 'end') {
-            this.path = newpath;
-            this.emit('end'); return;
-        } else if(this.opts.onMove == 'error') {
-            this.path = newpath;
-            this.error("File move detected"); return;
-        } else if(this.opts.onMove == 'stay') {
-            this.emit('move', oldpath, newpath);
-            this.waitForFileToReappear();
-        } else { // opts.onMove == 'follow
-            this.path = newpath;
-            this.emit('move', oldpath, newpath);
-            this.waitForMoreData();
-        }
-    };
-
     // If forceWatchFile is true always use fs.watchFile instead of fs.watch
     this.waitForMoreData = function(forceWatchFile) {
         if(this.watcher) {
@@ -133,17 +83,6 @@ function TailStream(filepath, opts) {
                     this.deleteEOF();
                     this.dataAvailable = true;
                     this.read(0);
-                } else if(event === 'rename') {
-                    var newpath = this.getCurrentPath(filename);
-                    this.move(newpath);
-                }
-            });
-        } else {
-            // On Mac OS X and Linux, watchFile doesn't report the (re)appearance of
-            // the file. Watch the enclosing dir and then compare the filename of events
-            this.watcher = fs.watch(path.dirname(this.path), {persistent: true}, (event, filename) => {
-                if(filename && path.basename(this.path) === filename) {
-                    this.fileReappeared();
                 }
             });
         }
@@ -155,31 +94,6 @@ function TailStream(filepath, opts) {
         } else {
             this.emit('error', msg);
         }
-    };
-
-    this.watchFileCallback = function(cur, prev) {
-        // was the file moved or deleted?
-        if(!cur.dev && !cur.ino) {
-            if(this.waitingForReappear) {
-                return;
-            }
-            // check if it was moved
-            var newpath = this.getCurrentPath();
-            if(!newpath) {
-                this.error("File was deleted", 'EBADF');
-                return;
-            } else {
-                this.move(newpath);
-            }
-        }
-        if(this.waitingForReappear) { // file re-appeared
-            this.fileReappeared();
-        }
-        if(cur.mtime.getTime() > prev.mtime.getTime()) {
-            this.dataAvailable = true;
-            this.read(0);
-        }
-
     };
 
     this.end = function(errCode) {
@@ -218,11 +132,7 @@ function TailStream(filepath, opts) {
     this._readCont = function(err, stat) {
         if(err) {
             if(err.code == 'ENOENT') {
-                if (this.opts.onMove !== 'follow') {
                     this.error("File deleted", err.code);
-                }
-            } else {
-                this.error("Error during truncate detection: " + err, err.code);
             }
             stat = null;
         }
@@ -265,6 +175,7 @@ function TailStream(filepath, opts) {
         if(!this.fd) {
             return false;
         }
+
         var buffer = Buffer.alloc(16 * 1024);
         fs.read(this.fd, buffer, 0, buffer.length, this.bytesRead, (err, bytesRead) => {
             if(err) {
@@ -303,6 +214,7 @@ function TailStream(filepath, opts) {
             this.endMarker = process.hrtime(this.startMarker);
             console.log("emit EOF now. (hr): %ds %dms", this.endMarker[0], this.endMarker[1] / 1000000)
             this.emit('eof');
+            this.end();
         }, 600);
     }
 
@@ -315,13 +227,12 @@ function TailStream(filepath, opts) {
             console.info('stopped EOF -> Execution time between timeout & clear (hr): %ds %dms', this.endMarker[0], this.endMarker[1] / 1000000)
         }
     }
-
+    //beginn the whole process
     this._start();
 }
-util.inherits(TailStream, stream.Readable);
-
-module.exports = ts = {
+util.inherits(ChunkedStream, stream.Readable);
+module.exports = chs = {
     createReadStream: function(path, options) {
-        return new TailStream(path, options);
+        return new ChunkedStream(path, options);
     }
 };
